@@ -1,0 +1,26 @@
+{
+  "name": "opencode-unlimited",
+  "version": "1.1.0-linux",
+  "description": "Linux/Arch companion for OpenCode: read the free-tier meter, watch for limit lines, rotate egress, re-id sessions and switch models.",
+  "private": true,
+  "bin": {
+    "opencode-unlimited": "bin/opencode-unlimited"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "files": [
+    "bin/opencode-unlimited",
+    "lib",
+    "plugins",
+    "install.sh",
+    "uninstall.sh"
+  ],
+  "keywords": [
+    "opencode",
+    "free-tier",
+    "linux",
+    "arch",
+    "proxy"
+  ]
+}

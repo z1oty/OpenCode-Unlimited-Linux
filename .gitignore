@@ -1,0 +1,11 @@
+identity.json
+unlimited.json
+unlimited-*.json
+unlimited-*.log
+unlimited-*.pid
+*.log
+*.pid
+node_modules/
+dist/
+coverage/
+.DS_Store
