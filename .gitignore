@@ -19,3 +19,6 @@ coverage/
 # OS
 .DS_Store
 Thumbs.db
+
+# CI workflow (remove if you want to re-add with workflow scope)
+.github/
