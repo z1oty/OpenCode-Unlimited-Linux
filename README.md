@@ -86,7 +86,3 @@ opencode-unlimited version         # show version
 Original tool: [Tazmyan/OpenCode-Unlimited](https://github.com/Tazmyan/OpenCode-Unlimited)
 
 Linux port developed with [Claude Opus 4.6](https://www.anthropic.com) & [DeepSeek V4.1 Flash](https://www.deepseek.com).
-
-## License
-
-MIT — see [LICENSE](LICENSE)
