@@ -11,7 +11,7 @@ workable:
   without spending a prompt;
 - clears the stale limit banner that OpenCode keeps replaying from stored rows;
 - rotates a local virtual device identity and session ids;
-- rotates your network exit through a proxy pool when a block is spent;
+- applies **your own** upstream proxy (HTTP or SOCKS5) and never picks one for you;
 - can switch a folder or session to a different model.
 
 ```bash
@@ -92,8 +92,8 @@ a reset worked when the address did not change.
    identifiers are read or written);
 2. clears stored free-limit error rows (`db-tools.js`);
 3. optionally re-ids every session in the given folder, keeping every message;
-4. rotates the egress route (proxy pool or manual);
-5. records the new block in the ledger;
+4. shows the upstream you configured (there is no automatic rotation);
+5. records the current block in the ledger;
 6. runs a quick integrity check with `--fix`.
 
 `reset --dry` shows exactly what would be touched and writes nothing.
@@ -101,15 +101,16 @@ a reset worked when the address did not change.
 ### `watch`
 
 Scans `~/.local/share/opencode/log/opencode.log` for free-limit lines. A scan
-spends zero prompts. `--follow` keeps tailing, `--all` rescans from the start,
-`--auto` rotates the route when a limit line appears (max 5 rotations per 30
-minutes).
+spends zero prompts. `--follow` keeps tailing, `--all` rescans from the start.
+When a limit line appears it reports it and tells you to change your own exit —
+it never rotates or retries a proxy for you.
 
-### `hunt`
+### `proxy`
 
-Rotates through the proxy pool and, unless `--no-probe` is passed, asks the real
-app once per candidate. Routes that already burned today's bucket are recorded
-and skipped.
+You supply the upstream. `proxy set socks5://host:port` (or `http://…`) applies
+it to the OpenCode service environment and tests it once; SOCKS5 is bridged to a
+local HTTP port automatically. `proxy off` returns to direct egress.
+`proxy status` shows the configured upstream and the current egress IP.
 
 ### `model`
 
@@ -126,7 +127,7 @@ behind.
   listed in `~/.config/opencode/opencode.json`;
 - a systemd **user** unit
   `~/.config/systemd/user/opencode-unlimited-watch.service` that keeps
-  `watch --follow --auto` alive.
+  `watch --follow` alive.
 
 `off` stops the watcher, removes the unit, drops the service proxy environment,
 parks the plugin and leaves sessions/messages/identity files untouched.
@@ -147,12 +148,7 @@ parks the plugin and leaves sessions/messages/identity files untouched.
 | `usage` | Meter summary, egress IP, reset clock |
 | `usage --check` | Run a real throwaway probe against the app |
 | `watch [--follow]` | Read the OpenCode log, zero prompts spent |
-| `watch --follow --auto` | Rotate when a limit line lands |
-| `hunt` | Rotate until the probe says the route is open |
-| `hunt --country XX` | Filter by country code |
-| `hunt --prefix a.b.c.` | Filter by IP prefix |
-| `hunt --no-probe` | Rotate without spending a probe |
-| `hunt --no-restart` | Do not restart the background service |
+| `watch --follow` | Keep tailing the log |
 | `token [save\|restore\|drop]` | Snapshot `auth.json` when the build uses one |
 | `sessions [path]` | List sessions, ids and history size |
 | `model` | List credentialed providers and free models |
@@ -168,20 +164,12 @@ parks the plugin and leaves sessions/messages/identity files untouched.
 | `on` / `off` | Full auto setup / teardown |
 | `proxy set <url>` | Route OpenCode through `socks5://` or `http://` |
 | `proxy off` | Direct egress |
-| `proxy status` | Current upstream + pool |
-| `proxy stats` | Per-proxy health, speed and quarantine |
-| `proxy test [--top N]` | Probe the pool, park the dead ones |
-| `proxy pool add <url>` | Queue one or more proxies |
-| `proxy pool set <url...>` | Replace the pool |
-| `proxy pool fetch [url]` | Pull a free proxy list |
-| `proxy pool refresh` | Refetch the list now |
-| `proxy pool clear` | Empty the pool |
-| `proxy next` | Jump to the next pooled proxy |
+| `proxy status` | Configured upstream, bridge port, current IP |
 | `plugin` | Plugin status |
 | `plugin install` | Install and list the shield plugin |
 | `plugin off` | Unlist and park the plugin |
-| `warp on\|off\|rotate` | Cloudflare WARP path (optional) |
-| `run <args...>` | Run OpenCode, rotate on free-limit |
+| `warp on\|off\|rotate` | Cloudflare WARP path (optional, manual) |
+| `run <args...>` | Run OpenCode once, no retry |
 | `uninstall` | Remove plugin, slash commands and state files |
 
 ---
@@ -190,11 +178,10 @@ parks the plugin and leaves sessions/messages/identity files untouched.
 
 | Path | Purpose |
 |------|---------|
-| `~/.config/opencode/unlimited.json` | tool config (model, proxy, pool, flags) |
+| `~/.config/opencode/unlimited.json` | tool config (model, proxy, flags) |
 | `~/.config/opencode/unlimited-identity.json` | virtual device id + project id |
 | `~/.config/opencode/identity.json` | project id read by the shield plugin |
 | `~/.config/opencode/unlimited-egress.json` | daily egress-block ledger |
-| `~/.config/opencode/unlimited-pool.json` | cached proxy list |
 | `~/.config/opencode/unlimited-info.json` | detected OpenCode info (5 min cache) |
 | `~/.config/opencode/plugins/unlimited-shield/` | installed shield plugin |
 | `~/.local/state/opencode-unlimited/machine-guid.txt` | virtual machine id |
@@ -241,10 +228,10 @@ OpenCode v2 keeps credentials in its SQLite database (`credential` / `account`
 tables), so `auth.json` and `token save` are usually a no-op on Linux. The model
 listing reads those tables directly.
 
-## Optional: VLESS helper
+## Optional: your own VLESS proxy
 
-If you install `xray` yourself (`pacman -S xray`), `hunt` can be paired with a
-VLESS subscription file; the tool itself only needs an HTTP or SOCKS5 upstream:
+If you install `xray` yourself (`pacman -S xray`), point the tool at the local
+SOCKS5 port; no subscription parsing or rotating is built in:
 
 ```bash
 opencode-unlimited proxy set socks5://127.0.0.1:10808

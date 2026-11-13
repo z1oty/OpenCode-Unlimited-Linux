@@ -23,7 +23,6 @@ required=(
     "$ROOT/lib/identity.js"
     "$ROOT/lib/egress.js"
     "$ROOT/lib/log-watch.js"
-    "$ROOT/lib/proxy-health.js"
     "$ROOT/lib/model-switch.js"
     "$ROOT/lib/paths.js"
     "$ROOT/plugins/unlimited-shield.js"

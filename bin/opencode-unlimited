@@ -11,11 +11,10 @@ const ROOT = resolve(__dirname, "..");
 const LIB = (name) => join(ROOT, "lib", name);
 const paths = require(LIB("paths.js"));
 
-const VERSION = "1.1.0-linux";
+const VERSION = "1.2.0-linux";
 const DEFAULT_MODEL = "deepseek-v4.1-flash-free";
 const TRACE_URL = "https://cloudflare.com/cdn-cgi/trace";
 const GATEWAY = "https://opencode.ai/inference/openai/v1/chat/completions";
-const SLOW_MS = 3500;
 const DEFAULT_BRIDGE_PORT = 8899;
 const AUTO_UNIT = "opencode-unlimited-watch.service";
 
@@ -34,18 +33,10 @@ const WATCH_PID_FILE = join(CONFIG_DIR, "unlimited-watch.pid");
 const WATCH_LOG = join(CONFIG_DIR, "unlimited-watch.log");
 const BRIDGE_LOG = join(CONFIG_DIR, "unlimited-bridge.log");
 const IP_CACHE = join(CONFIG_DIR, "unlimited-ip.json");
-const POOL_CACHE = join(CONFIG_DIR, "unlimited-pool.json");
-const ROTATE_GATE = join(CONFIG_DIR, "unlimited-rotate.json");
 const AUTH_FILE = join(DATA_DIR, "auth.json");
 const AUTH_SNAPSHOT = join(STATE_DIR, "auth-snapshot", "auth.json");
 const USER_UNIT_DIR = join(paths.homeDir(), ".config", "systemd", "user");
 const USER_UNIT = join(USER_UNIT_DIR, AUTO_UNIT);
-const DEFAULT_PROXY_SOURCES = [
-  "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-  "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-  "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
-  "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
-];
 
 const C = process.stdout.isTTY
   ? { ok: "\x1b[32m", warn: "\x1b[33m", bad: "\x1b[31m", info: "\x1b[90m", r: "\x1b[0m" }
@@ -133,18 +124,6 @@ function yes(list, ...names) {
   return list.some((item) => names.includes(String(item).toLowerCase()));
 }
 
-function argValue(list, names, fallback = "") {
-  for (let i = 0; i < list.length - 1; i += 1) {
-    if (names.includes(list[i])) return String(list[i + 1]);
-  }
-  return fallback;
-}
-
-function argInt(list, names, fallback) {
-  const value = Number(argValue(list, names, ""));
-  return Number.isFinite(value) && value !== 0 ? Math.trunc(value) : fallback;
-}
-
 function positional(list) {
   return list.filter((item) => item && !item.startsWith("-"));
 }
@@ -218,16 +197,11 @@ function config() {
     model: DEFAULT_MODEL,
     orgId: "",
     proxy: "",
-    proxyPool: [],
-    proxyIndex: 0,
-    proxyListUrl: "",
     bridgePort: DEFAULT_BRIDGE_PORT,
     ipMode: "manual",
     reidOnAuto: true,
     autoMode: false,
     autoStart: false,
-    autoTries: 12,
-    autoMinutes: 8,
     lastIp: "",
     lastCountry: "",
     updatedAt: "",
@@ -306,92 +280,6 @@ function addEgressRecord(status, retryAfter, country) {
 }
 
 // ---------------------------------------------------------------- proxies
-
-function proxyPool(cfg) {
-  const pool = [];
-  for (const entry of Array.isArray(cfg.proxyPool) ? cfg.proxyPool : []) {
-    const url = String(entry);
-    if (/^(socks5h?|http|https):\/\//.test(url) && !pool.includes(url)) pool.push(url);
-  }
-  const cache = readJson(POOL_CACHE);
-  if (cache && Array.isArray(cache.proxies)) {
-    for (const entry of cache.proxies) {
-      const url = String(entry);
-      if (/^https?:\/\//.test(url) && !pool.includes(url)) pool.push(url);
-    }
-  }
-  return pool;
-}
-
-function health(args) {
-  return helperJson("proxy-health.js", args);
-}
-
-function setHealth(url, isOk, ms, reason) {
-  if (!url) return;
-  runHelper("proxy-health.js", ["record", url, isOk ? "ok" : "fail", String(ms), reason || ""]);
-}
-
-function rankedPool(cfg) {
-  const pool = proxyPool(cfg);
-  if (!pool.length) return [];
-  const report = health(["rank", ...pool]);
-  if (report && Array.isArray(report.proxies)) return report.proxies;
-  return pool;
-}
-
-function healthReport(cfg) {
-  const pool = proxyPool(cfg);
-  if (!pool.length) return null;
-  return health(["rank", ...pool]);
-}
-
-function parseProxyList(raw) {
-  const found = [];
-  for (const match of String(raw || "").matchAll(/(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})/g)) {
-    const octets = match[1].split(".").map(Number);
-    if (octets.some((value) => value > 255)) continue;
-    const port = Number(match[2]);
-    if (port < 1 || port > 65535) continue;
-    const entry = "http://" + match[1] + ":" + port;
-    if (!found.includes(entry)) found.push(entry);
-  }
-  return found;
-}
-
-function updateProxyList(cfg, force, quiet) {
-  const now = Math.round(Date.now() / 1000);
-  const cache = readJson(POOL_CACHE);
-  if (!force && cache && Array.isArray(cache.proxies) && cache.at && now - Number(cache.at) < 21600 && cache.proxies.length) {
-    return cache.proxies.length;
-  }
-  const sources = [];
-  if (/^https?:\/\//.test(String(cfg.proxyListUrl || ""))) sources.push(cfg.proxyListUrl);
-  for (const url of DEFAULT_PROXY_SOURCES) if (!sources.includes(url)) sources.push(url);
-  for (const url of sources) {
-    if (!quiet) info("proxy list: asking " + url);
-    const result = sh("curl", ["-s", "-L", "--max-time", "20", url], { timeout: 24000 });
-    if (result.code !== 0 || result.out.length < 32) continue;
-    const found = parseProxyList(result.out);
-    if (!found.length) continue;
-    for (let i = found.length - 1; i > 0; i -= 1) {
-      const j = randomBytes(4).readUInt32BE(0) % (i + 1);
-      const swap = found[i];
-      found[i] = found[j];
-      found[j] = swap;
-    }
-    const picked = found.slice(0, 200);
-    writeJson(POOL_CACHE, { at: now, source: url, proxies: picked });
-    if (String(cfg.proxyListUrl) !== url) {
-      cfg.proxyListUrl = url;
-      saveConfig(cfg);
-    }
-    if (!quiet) info("proxy list: " + picked.length + " candidates");
-    return picked.length;
-  }
-  if (!quiet) warn("every proxy source came back empty");
-  return 0;
-}
 
 function bridgePid() {
   const raw = readText(PID_FILE).trim();
@@ -496,86 +384,6 @@ function applyProxy(cfg, options = {}) {
   setUpstream(url);
   ok("service proxy set: " + url);
   return true;
-}
-
-function stepEgress(cfg, url, avoidIp, country, prefix) {
-  if (!url) return null;
-  info("testing: " + url);
-  const current = trace(url, { force: true, timeout: 6 });
-  if (!current.ip) {
-    setHealth(url, false, current.ms, "timeout");
-    info("  no answer in 6s");
-    return null;
-  }
-  if (current.ms > SLOW_MS) {
-    setHealth(url, true, current.ms, "slow");
-    info("  too slow, " + current.ms + " ms");
-    return null;
-  }
-  setHealth(url, true, current.ms, "");
-  if (avoidIp && sameBlock(current.ip, avoidIp)) {
-    info("  same egress block, " + current.ip);
-    return null;
-  }
-  if (country && String(current.country).toUpperCase() !== country.toUpperCase()) {
-    info("  filtered out, " + current.ip + " " + current.country);
-    return null;
-  }
-  if (prefix && !String(current.ip).startsWith(prefix)) {
-    info("  filtered out, " + current.ip);
-    return null;
-  }
-  cfg.proxy = url;
-  cfg.ipMode = "proxy";
-  saveConfig(cfg);
-  if (!applyProxy(cfg, { skipTest: true })) {
-    setHealth(url, false, 0, "upstream");
-    return null;
-  }
-  info("  live, " + current.ms + " ms");
-  return current;
-}
-
-function rotateEgress(cfg, avoidIp, country, prefix, options = {}) {
-  if (!proxyPool(cfg).length) updateProxyList(cfg, false, true);
-  const pool = rankedPool(cfg);
-  if (!pool.length) {
-    if (cfg.proxy) {
-      if (options.dry) {
-        info("would apply: " + cfg.proxy);
-        return null;
-      }
-      if (!applyProxy(cfg)) return null;
-      restartService();
-      sleep(600);
-      return trace(cfg.proxy, { force: true });
-    }
-    info("manual mode, no proxy configured");
-    info("change the network yourself, or run: opencode-unlimited on");
-    return null;
-  }
-  if (options.dry) {
-    info("would rotate to: " + pool[cfg.proxyIndex % pool.length] + " (" + pool.length + " in the pool)");
-    return null;
-  }
-  const limit = Math.min(pool.length, Math.max(1, options.tries || 8));
-  const start = Number(cfg.proxyIndex) || 0;
-  for (let i = 0; i < limit; i += 1) {
-    const index = (start + i) % pool.length;
-    const result = stepEgress(cfg, pool[index], avoidIp, country, prefix);
-    if (result) {
-      cfg.proxyIndex = (index + 1) % pool.length;
-      saveConfig(cfg);
-      if (!options.noRestart) {
-        restartService();
-        sleep(600);
-      }
-      ok("egress via " + cfg.proxy + " -> " + result.ip + " " + result.country + "  [" + result.ms + " ms]");
-      return result;
-    }
-  }
-  warn("no proxy in the pool produced a usable egress block");
-  return null;
 }
 
 function warpCli() {
@@ -772,6 +580,7 @@ function pluginLive() {
 function installSlashCommands() {
   const dir = join(CONFIG_DIR, "commands");
   mkdirSync(dir, { recursive: true });
+  rmSync(join(dir, "opencode-unlimited:hunt.md"), { force: true });
   const self = process.argv[1];
   const defs = {
     "opencode-unlimited": ["status", "Free-tier helper - identity, egress block, reset clock"],
@@ -780,10 +589,9 @@ function installSlashCommands() {
     "opencode-unlimited:block": ["block $ARGUMENTS", "Egress blocks seen today and which are spent"],
     "opencode-unlimited:usage": ["usage $ARGUMENTS", "Daily free bucket state and the reset clock"],
     "opencode-unlimited:watch": ["watch $ARGUMENTS", "Read the opencode log for a limit line, zero messages spent"],
-    "opencode-unlimited:hunt": ["hunt $ARGUMENTS", "Rotate until the probe says the route is open"],
     "opencode-unlimited:clear": ["clear $ARGUMENTS", "Strip stored free-limit errors from sessions"],
     "opencode-unlimited:token": ["token $ARGUMENTS", "Show or save the local auth snapshot"],
-    "opencode-unlimited:on": ["on $ARGUMENTS", "Full auto: identity, pool, route, watcher, autostart"],
+    "opencode-unlimited:on": ["on $ARGUMENTS", "Full auto: identity, route, watcher, autostart"],
     "opencode-unlimited:off": ["off $ARGUMENTS", "Stop the watcher, drop the proxy, keep the files"],
     "opencode-unlimited:reid": ["reid $ARGUMENTS", "Mint fresh session ids, keep every message"],
     "opencode-unlimited:model": ["model $ARGUMENTS", "List providers and switch this folder to a free model"],
@@ -832,7 +640,7 @@ function unitText() {
     "",
     "[Service]",
     "Type=simple",
-    "ExecStart=" + nodeExe() + " " + process.argv[1] + " watch --follow --auto",
+    "ExecStart=" + nodeExe() + " " + process.argv[1] + " watch --follow",
     "Restart=on-failure",
     "RestartSec=5",
     "Environment=NODE_NO_WARNINGS=1",
@@ -856,6 +664,17 @@ function watcherRunning() {
 
 function startWatcher() {
   if (watcherRunning()) {
+    if (systemdAvailable() && existsSync(USER_UNIT) && readText(USER_UNIT) !== unitText()) {
+      writeText(USER_UNIT, unitText());
+      sh("systemctl", ["--user", "daemon-reload"], { timeout: 8000 });
+      const restart = sh("systemctl", ["--user", "restart", AUTO_UNIT], { timeout: 15000 });
+      if (restart.code === 0) {
+        ok("watcher unit updated and restarted");
+        return true;
+      }
+      warn("watcher unit updated, restart failed");
+      return true;
+    }
     info("watcher already running");
     return true;
   }
@@ -870,7 +689,7 @@ function startWatcher() {
     }
     warn("user service did not start: " + (start.err.trim() || start.out.trim()));
   }
-  const child = spawn(nodeExe(), [process.argv[1], "watch", "--follow", "--auto"], { detached: true, stdio: ["ignore", "ignore", "ignore"] });
+  const child = spawn(nodeExe(), [process.argv[1], "watch", "--follow"], { detached: true, stdio: ["ignore", "ignore", "ignore"] });
   child.unref();
   writeText(WATCH_PID_FILE, String(child.pid));
   sleep(900);
@@ -1039,8 +858,7 @@ function cmdReset(flags) {
   say(dry ? "==> reset (dry run, nothing is written)" : "==> reset");
   const cfg = config();
   const target = targetPath(flags);
-  const hunt = yes(flags, "-hunt", "--hunt");
-  const before = trace(cfg.proxy, { force: true });
+  const before = trace(cfg.proxy);
   const ipBefore = before.ip;
   info("egress ip before: " + (ipBefore || "unknown") + (before.country ? "  " + before.country : ""));
 
@@ -1073,10 +891,15 @@ function cmdReset(flags) {
 
   say("");
   say("[4/6] egress route");
-  if (hunt) {
-    if (dry) info("would hunt for a route that is not already spent");
-    else huntRoute(cfg, 4, 8, "", "", {});
-  } else rotateEgress(cfg, ipBefore, "", "", { dry });
+  info("upstream: " + (cfg.proxy || "none (direct)"));
+  if (cfg.proxy) {
+    const live = trace(cfg.proxy);
+    if (live.ip) info("egress  : " + live.ip + (live.country ? "  " + live.country : ""));
+    else warn("upstream is not answering, prompts will fail until it recovers");
+  } else {
+    info("no automatic rotation, this tool never picks a route for you");
+    info("your own exit: opencode-unlimited proxy set socks5://host:port");
+  }
 
   say("");
   say("[5/6] egress block");
@@ -1084,17 +907,16 @@ function cmdReset(flags) {
     info("ip now: " + (ipBefore || "unknown") + ", nothing recorded");
   } else {
     sleep(1000);
-    const after = trace(cfg.proxy, { force: true });
+    const after = trace(cfg.proxy);
     cfg.lastIp = after.ip;
     cfg.lastCountry = after.country;
     saveConfig(cfg);
     if (after.ip) require(LIB("egress.js")).record({ ip: after.ip, status: 0, country: after.country });
     if (!after.ip) warn("egress ip unknown");
     else if (ipBefore && sameBlock(after.ip, ipBefore)) {
-      warn("same egress block: " + after.ip + " " + after.country);
-      info("the meter follows the egress block, not the project, the session or the device");
-      info("if a refusal was logged today, this block stays spent until 00:00 UTC");
-      info("change the connection, or switch model to leave the meter behind");
+      info("egress block unchanged: " + after.ip + " " + after.country);
+      info("the meter follows the block, reset does not move it");
+      info("change the exit yourself, or switch model to leave the meter behind");
     } else ok("new egress block: " + after.ip + " " + after.country);
   }
 
@@ -1114,103 +936,8 @@ function cmdReset(flags) {
   info("switch model to skip the meter: opencode-unlimited model provider/model");
 }
 
-function rotateGate() {
-  const now = Math.round(Date.now() / 1000);
-  const state = readJson(ROTATE_GATE) || {};
-  const keep = (Array.isArray(state.stamps) ? state.stamps : []).filter((stamp) => now - Number(stamp) < 1800);
-  if (keep.length >= 5) return false;
-  keep.push(now);
-  writeJson(ROTATE_GATE, { stamps: keep });
-  return true;
-}
-
-function huntRoute(cfg, tries, minutes, country, prefix, options = {}) {
-  if (!tries || tries <= 0) tries = 6;
-  if (!minutes || minutes <= 0) minutes = 10;
-  const started = Date.now();
-  let avoid = egressIp(cfg.proxy, true);
-  let same = 0;
-  let burned = 0;
-  for (let attempt = 1; attempt <= tries; attempt += 1) {
-    if ((Date.now() - started) / 60000 > minutes) {
-      warn("hunt: time is up");
-      return null;
-    }
-    info("[" + attempt + "/" + tries + "] rotating");
-    const found = rotateEgress(cfg, avoid, country, prefix, { tries, noRestart: options.noRestart });
-    if (!found) {
-      warn("  no route matched");
-      sleep(2000);
-      continue;
-    }
-    if (avoid && sameBlock(found.ip, avoid)) {
-      same += 1;
-      warn("  same block as before (" + same + "/3)");
-      if (same >= 3) {
-        bad("  the rotation keeps returning the same block");
-        return null;
-      }
-      sleep(2000);
-      continue;
-    }
-    same = 0;
-    avoid = found.ip;
-    if (options.noProbe) return found;
-    const probe = appProbe();
-    if (probe.ok) {
-      addEgressRecord(200, 0, found.country);
-      ok("  route accepted: " + found.ip + " " + found.country);
-      return found;
-    }
-    if (probe.blocked) {
-      burned += 1;
-      addEgressRecord(429, 0, found.country);
-      warn("  block already spent (" + burned + " burned)");
-      if (burned >= 4) {
-        bad("  too many burned blocks, stopping");
-        return null;
-      }
-      continue;
-    }
-    warn("  probe unconfirmed: " + probe.reason);
-    return found;
-  }
-  bad("hunt: no usable route found");
-  return null;
-}
-
-function cmdHunt(flags) {
-  const cfg = config();
-  const tries = argInt(flags, ["-tries", "--tries", "-n"], 6);
-  const minutes = argInt(flags, ["-minutes", "--minutes", "-m"], 10);
-  const country = argValue(flags, ["-country", "--country"], "").toUpperCase();
-  const prefix = argValue(flags, ["-prefix", "--prefix"], "");
-  say("==> route hunt");
-  info("tries   : " + tries);
-  info("minutes : " + minutes);
-  if (country) info("country : " + country);
-  if (prefix) info("prefix  : " + prefix);
-  if (yes(flags, "-noprobe", "--no-probe")) info("probe   : off, the route is taken on trust");
-  if (yes(flags, "-norestart", "--no-restart")) info("restart : off, the service keeps its current process");
-  say("");
-  const found = huntRoute(cfg, tries, minutes, country, prefix, {
-    noProbe: yes(flags, "-noprobe", "--no-probe"),
-    noRestart: yes(flags, "-norestart", "--no-restart"),
-  });
-  say("");
-  if (found) {
-    ok("live route: " + found.ip + " " + found.country);
-    info("send the prompt again, the meter is on the new block");
-  } else {
-    bad("no usable route found");
-    info("add proxies: opencode-unlimited proxy pool add socks5://host:port");
-    info("or point at a list: opencode-unlimited proxy pool fetch <url>");
-  }
-}
-
 function cmdWatch(flags) {
   const follow = yes(flags, "-follow", "--follow", "-f");
-  const auto = yes(flags, "-auto", "--auto");
   const all = yes(flags, "-all", "--all");
   say("==> free limit watcher");
   let scanArgs = ["scan"];
@@ -1237,36 +964,23 @@ function cmdWatch(flags) {
       info("older events hidden: " + (events.length - 6));
       events = events.slice(-6);
     }
-    let rotateSeen = 0;
-    let handled = false;
+    let limitSeen = 0;
     for (const event of events) {
       const when = event.at ? new Date(event.at).toLocaleTimeString() : new Date().toLocaleTimeString();
       const label = event.message || "error";
       const reasonText = event.reason ? "  [" + event.reason + "]" : "";
       if (event.kind === "rotate") {
-        rotateSeen += 1;
+        limitSeen += 1;
         bad("limit at " + when + "   " + label + reasonText + "  run=" + event.run);
-        if (!auto) continue;
-        if (!rotateGate()) {
-          warn("rotation gate: 5 moves per 30 minutes, holding");
-          continue;
-        }
-        const cfg = config();
-        const found = huntRoute(cfg, 4, 8, "", "", {});
-        if (found) {
-          ok("route live: " + found.ip + " " + found.country);
-          info("send the prompt again, the new block is in place");
-          handled = true;
-          if (follow) return;
-        } else warn("no usable route yet, still watching");
       } else {
         warn("rate limit at " + when + "   " + label + reasonText + "  run=" + event.run);
         info("that is a throttle, not the daily bucket: wait and retry");
       }
     }
-    if (rotateSeen > 0 && !auto && !handled) {
-      info("next: opencode-unlimited hunt");
-      info("or let the watcher drive: opencode-unlimited watch --follow --auto");
+    if (limitSeen > 0) {
+      info("no automatic rotation. change your exit, then send the prompt again:");
+      info("  opencode-unlimited proxy set socks5://host:port");
+      info("  opencode-unlimited proxy off");
     }
     if (!follow) return;
     sleep(2000);
@@ -1614,9 +1328,6 @@ function cmdStatus() {
   info("mode       : " + (cfg.autoMode ? "on" : "off"));
   info("watcher    : " + (watcherRunning() ? "running" : "stopped"));
   info("autostart  : " + autostartState());
-  const report = healthReport(cfg);
-  if (report) info("pool health: " + report.usable + " usable, " + report.held + " parked of " + report.total);
-  else info("pool health: no pool yet");
   say("");
   say("network");
   const current = trace(cfg.proxy);
@@ -1626,7 +1337,6 @@ function cmdStatus() {
   info("egress ip  : " + ipText);
   info("ipMode     : " + cfg.ipMode);
   info("upstream   : " + (cfg.proxy || "none (manual)"));
-  if (cfg.proxyListUrl) info("list url   : " + cfg.proxyListUrl);
   const pid = bridgePid();
   if (pid && pidAlive(pid)) info("bridge     : running (pid " + pid + ", port " + cfg.bridgePort + ")");
   else info("bridge     : stopped");
@@ -1652,12 +1362,12 @@ function selectFreeModel(cfg) {
 }
 
 function autoSetup(cfg, options = {}) {
-  say("[1/7] prerequisites");
+  say("[1/6] prerequisites");
   ok("node " + process.version);
   info("opencode : " + opencodeExe());
   info("database : " + (dbPath() || "not found, the app has not run yet"));
   say("");
-  say("[2/7] device identity");
+  say("[2/6] device identity");
   const identity = helperJson("identity.js", [options.keepId ? "show" : "rotate"]);
   if (identity && identity.deviceId) {
     ok("device id : " + identity.deviceId + "  (" + (options.keepId ? "kept" : "fresh") + ")");
@@ -1665,52 +1375,36 @@ function autoSetup(cfg, options = {}) {
     info("local file only, no system identifier is touched");
   } else warn("identity left as it was");
   say("");
-  say("[3/7] model");
+  say("[3/6] model");
   ok("free model: " + selectFreeModel(cfg));
   say("");
-  say("[4/7] proxy pool");
-  let pool = proxyPool(cfg);
-  if (!pool.length) {
-    info("pool is empty, pulling a public list");
-    updateProxyList(cfg, false, false);
-    pool = proxyPool(cfg);
-  }
-  if (pool.length) {
-    const report = healthReport(cfg);
-    const tail = report ? ", " + report.usable + " usable, " + report.held + " parked" : "";
-    ok(pool.length + " candidates" + tail);
-  } else warn("no proxy list came back, the machine keeps its own route");
-  say("");
-  say("[5/7] egress route");
+  say("[4/6] egress route");
   if (options.keepRoute) {
     const current = trace(cfg.proxy, { force: true });
     if (current.ip) info("left alone, egress " + current.ip + " " + current.country);
     else warn("route unknown");
-  } else if (!pool.length) info("no pool to rotate through, nothing to change");
-  else {
-    const tries = Number(cfg.autoTries) > 0 ? Number(cfg.autoTries) : 12;
-    const minutes = Number(cfg.autoMinutes) > 0 ? Number(cfg.autoMinutes) : 8;
-    info("hunting: " + tries + " tries, " + minutes + " minute cap" + (options.noProbe ? ", probe off" : ", each route probed"));
-    const found = huntRoute(cfg, tries, minutes, "", "", { noProbe: options.noProbe });
-    if (found) ok("route live: " + found.ip + " " + found.country + "  [" + found.ms + " ms]");
-    else {
-      warn("nothing in the pool worked, rolling back to direct");
-      cfg.proxy = "";
-      cfg.ipMode = "manual";
-      saveConfig(cfg);
-      applyProxy(cfg);
+  } else if (cfg.proxy) {
+    if (applyProxy(cfg)) {
       restartService();
-    }
+      sleep(600);
+      const current = trace(cfg.proxy, { force: true });
+      if (current.ip) ok("upstream live: " + current.ip + " " + current.country);
+      else warn("upstream did not answer after applying it");
+    } else warn("configured upstream did not answer, left as is");
+  } else {
+    info("direct egress, no upstream configured");
+    info("your own exit: opencode-unlimited proxy set socks5://host:port");
+    info("no automatic rotation, the pool is not part of this tool");
   }
   say("");
-  say("[6/7] sessions");
+  say("[5/6] sessions");
   info("clearing stored free-limit errors in every session, not just this folder");
   removeStuckErrors();
   if (options.noReid || !cfg.reidOnAuto) info("reid skipped");
   else if (!hasSqlite()) warn("node 22.5+ required for reid, sessions left alone");
   else showReidBatch(reidPath(process.cwd(), false));
   say("");
-  say("[7/7] watcher and plugin");
+  say("[6/6] watcher and plugin");
   if (!installPlugin()) warn("plugin not installed, everything else still runs");
   setPluginEnabled(true);
   sleep(1200);
@@ -1731,13 +1425,12 @@ function autoSetup(cfg, options = {}) {
 function cmdOn(flags) {
   const cfg = config();
   say("==> opencode-unlimited on");
-  info("one pass: identity, model, pool, verified route, sessions, watcher");
-  info("after that the watcher keeps it moving by itself");
+  info("one pass: identity, model, route, sessions, watcher");
+  info("the watcher keeps watching; it never changes your proxy");
   say("");
   autoSetup(cfg, {
     keepId: yes(flags, "-keepid", "--keep-id"),
     noReid: yes(flags, "-noreid", "--no-reid"),
-    noProbe: yes(flags, "-noprobe", "--no-probe"),
     noStart: yes(flags, "-nostart", "--no-start"),
     keepRoute: yes(flags, "-keeproute", "--keep-route"),
   });
@@ -1768,105 +1461,6 @@ function cmdOff() {
   info("sessions, messages and the identity file were not touched");
 }
 
-function showProxyPool(cfg) {
-  const pool = proxyPool(cfg);
-  const cache = readJson(POOL_CACHE);
-  if (!pool.length) {
-    info("pool: empty");
-    info("opencode-unlimited proxy pool add socks5://host:port");
-    info("opencode-unlimited proxy pool fetch https://example.com/list.txt");
-    return;
-  }
-  const active = Number(cfg.proxyIndex) || 0;
-  info("pool: " + pool.length + " entries, active #" + (active + 1));
-  const shown = Math.min(pool.length, 20);
-  for (let i = 0; i < shown; i += 1) info("  " + (i === active ? "->" : "  ") + " " + (i + 1) + ". " + pool[i]);
-  if (pool.length > shown) info("  .. " + (pool.length - shown) + " more, use: proxy stats");
-  if (cache && cache.proxies) info("list cache: " + cache.proxies.length + " from " + cache.source);
-  if (cfg.proxyListUrl) info("list url  : " + cfg.proxyListUrl);
-}
-
-function showProxyStats(cfg) {
-  const report = healthReport(cfg);
-  if (!report) {
-    info("pool: empty");
-    info("opencode-unlimited proxy pool fetch");
-    return;
-  }
-  info("pool    : " + report.total + " entries, " + report.usable + " usable, " + report.held + " parked");
-  let index = 0;
-  for (const row of (report.detail || []).slice(0, 40)) {
-    index += 1;
-    const state = row.quarantined ? "park" : row.ms > SLOW_MS ? "slow" : row.ms > 0 ? "ok  " : "new ";
-    const msText = row.ms > 0 ? String(row.ms).padStart(5) + " ms" : "    ---";
-    info("  " + String(index).padStart(2) + ". " + state + " " + msText + "  fail=" + String(row.fail).padStart(2) + "  " + row.url);
-  }
-}
-
-function testProxyBatch(cfg, top) {
-  const pool = rankedPool(cfg);
-  if (!pool.length) {
-    bad("pool is empty, run: opencode-unlimited proxy pool fetch");
-    return;
-  }
-  if (!top || top <= 0) top = 20;
-  const limit = Math.min(pool.length, top);
-  info("probing " + limit + " of " + pool.length + " proxies, 6s each");
-  let usable = 0;
-  for (let i = 0; i < limit; i += 1) {
-    const url = pool[i];
-    const current = trace(url, { force: true, timeout: 6 });
-    if (current.ip) {
-      setHealth(url, true, current.ms, "");
-      const mark = current.ms > SLOW_MS ? "slow" : "ok  ";
-      if (current.ms <= SLOW_MS) usable += 1;
-      info("  " + mark + " " + String(current.ms).padStart(5) + " ms  " + current.ip.padEnd(15) + " " + String(current.country).padEnd(2) + "  " + url);
-    } else {
-      setHealth(url, false, 0, "timeout");
-      info("  dead     ---  " + url);
-    }
-  }
-  say("");
-  if (usable > 0) ok(usable + " usable of " + limit + " probed");
-  else bad("0 usable of " + limit + " probed");
-}
-
-function cmdPlugin(flags) {
-  const sub = flags.length ? String(flags[0]).toLowerCase() : "status";
-  if (sub === "install") {
-    say("==> installing the shield plugin");
-    if (installPlugin()) {
-      setPluginEnabled(true);
-      info("opencode reloads config on save, the plugin appears at the next request");
-      info("check it with: opencode-unlimited plugin status");
-    }
-    return;
-  }
-  if (sub === "off") {
-    setPluginEnabled(false);
-    rmSync(PLUGIN_MARKER, { force: true });
-    ok("plugin unlisted from opencode config and parked on disk");
-    return;
-  }
-  if (sub === "verify") {
-    restartService();
-    sleep(1500);
-    const live = pluginLive();
-    if (live) ok("loaded, hooks " + (live.hooks || []).join(", "));
-    else warn("not reported by the server yet, open the app once and check again");
-    return;
-  }
-  say("==> shield plugin");
-  info("state  : " + pluginState());
-  info("path   : " + PLUGIN_FILE);
-  info("config : " + (pluginRegistered() ? PLUGIN_ENTRY + " listed" : "not listed"));
-  const live = pluginLive();
-  if (live) {
-    ok("live   : opencode " + live.version + ", hooks " + (live.hooks || []).join(", "));
-    info("it stamps the virtual project id and session affinity on every model request");
-  } else info("live   : not reported yet");
-}
-
 function cmdProxy(flags) {
   const cfg = config();
   const sub = flags.length ? String(flags[0]) : "status";
@@ -1880,109 +1474,19 @@ function cmdProxy(flags) {
     info("egress is direct again");
     return;
   }
-  if (sub === "next") {
-    const found = rotateEgress(cfg, "", "", "", {});
-    saveConfig(cfg);
-    if (found) ok("egress: " + found.ip + " " + found.country);
-    else warn("no new route, see the notes above");
-    return;
-  }
-  if (sub === "pool") {
-    const action = flags.length >= 2 ? String(flags[1]) : "show";
-    if (action === "add") {
-      const urls = flags.slice(2).filter((item) => /^(socks5h?|http|https):\/\//.test(item));
-      if (!urls.length) {
-        bad("expected one or more proxy urls");
-        return;
-      }
-      const pool = proxyPool(cfg);
-      let added = 0;
-      for (const url of urls) {
-        if (pool.includes(url)) {
-          info("already in the pool: " + url);
-          continue;
-        }
-        pool.push(url);
-        added += 1;
-      }
-      cfg.proxyPool = pool;
-      saveConfig(cfg);
-      ok("pool size: " + pool.length + " (+" + added + ")");
-      showProxyPool(cfg);
-      return;
-    }
-    if (action === "set") {
-      const urls = flags.slice(2).filter((item) => /^(socks5h?|http|https):\/\//.test(item));
-      if (!urls.length) {
-        bad("expected one or more proxy urls");
-        return;
-      }
-      cfg.proxyPool = urls;
-      cfg.proxyIndex = 0;
-      saveConfig(cfg);
-      ok("pool replaced, " + urls.length + " entries");
-      showProxyPool(cfg);
-      return;
-    }
-    if (action === "clear") {
-      cfg.proxyPool = [];
-      cfg.proxyIndex = 0;
-      cfg.proxyListUrl = "";
-      rmSync(POOL_CACHE, { force: true });
-      saveConfig(cfg);
-      ok("pool cleared, the current upstream was left alone");
-      return;
-    }
-    if (action === "fetch") {
-      const url = flags.length >= 3 ? String(flags[2]) : "";
-      if (url && !/^https?:\/\//.test(url)) {
-        bad("expected an http(s) list url");
-        return;
-      }
-      cfg.proxyListUrl = url;
-      saveConfig(cfg);
-      const count = updateProxyList(cfg, true, false);
-      if (count > 0) ok("list cache: " + count + " proxies");
-      showProxyPool(cfg);
-      return;
-    }
-    if (action === "refresh") {
-      if (!cfg.proxyListUrl) {
-        bad("no list url yet, run: proxy pool fetch <url>");
-        return;
-      }
-      const count = updateProxyList(cfg, true, false);
-      if (count > 0) ok("list cache refreshed: " + count);
-      showProxyPool(cfg);
-      return;
-    }
-    showProxyPool(cfg);
-    return;
-  }
   if (sub === "status") {
     const current = trace(cfg.proxy);
     info("upstream : " + (cfg.proxy || "none (manual)"));
+    info("ipMode   : " + cfg.ipMode);
     info("bridge   : 127.0.0.1:" + cfg.bridgePort);
     info("ip       : " + (current.ip || "unknown") + (current.country ? "  " + current.country : ""));
-    showProxyPool(cfg);
-    return;
-  }
-  if (sub === "stats") {
-    showProxyStats(cfg);
-    return;
-  }
-  if (sub === "test") {
-    testProxyBatch(cfg, argInt(flags, ["-top", "--top", "-n"], 20));
-    return;
-  }
-  if (sub === "healthreset") {
-    health(["reset"]);
-    ok("proxy health cleared, every entry is a clean slate again");
+    info("rotation : none, you supply the upstream");
     return;
   }
   const url = sub === "set" && flags.length >= 2 ? String(flags[1]) : String(flags[0] || "");
   if (!/^(socks5h?|http|https):\/\//.test(url)) {
     bad("expected socks5://host:port or http://host:port");
+    info("usage: opencode-unlimited proxy set <url> | proxy off | proxy status");
     return;
   }
   cfg.proxy = url;
@@ -2043,7 +1547,7 @@ function cmdWarp(flags) {
     }
     if (before.ip && sameBlock(after.ip, before.ip)) {
       warn("same egress block: " + after.ip + " " + after.country);
-      info("warp does not guarantee a new ip, reconnect again or use a proxy pool");
+      info("warp does not guarantee a new ip, reconnect again or set another upstream");
     } else ok("new egress block: " + before.ip + " -> " + after.ip + " " + after.country);
     return;
   }
@@ -2056,28 +1560,17 @@ function cmdRun(flags) {
     bad("usage: opencode-unlimited run <opencode args>");
     return 1;
   }
-  const exe = opencodeExe();
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const result = sh(exe, flags, { timeout: 0 });
-    const text = result.out + "\n" + result.err;
-    if (!limitText(text)) {
-      process.stdout.write(result.out);
-      process.stderr.write(result.err);
-      return result.code;
-    }
-    warn("free limit hit (attempt " + attempt + "/3)");
+  const result = sh(opencodeExe(), flags, { timeout: 0 });
+  process.stdout.write(result.out);
+  process.stderr.write(result.err);
+  if (limitText(result.out + "\n" + result.err)) {
+    warn("free limit hit");
     addEgressRecord(429, 0, "");
-    runHelper("identity.js", ["rotate"]);
-    const cfg = config();
-    if (cfg.proxy) {
-      applyProxy(cfg);
-      restartService();
-    }
-    sleep(2000);
+    info("no retry: change your exit, then run the same command again");
+    info("  opencode-unlimited proxy set socks5://host:port");
+    return result.code || 1;
   }
-  bad("still limited after 3 attempts");
-  info("the meter follows the egress block, change the connection and run: opencode-unlimited usage");
-  return 1;
+  return result.code;
 }
 
 function cmdDoctor() {
@@ -2161,10 +1654,7 @@ function cmdHelp() {
   info("block check          is the address you are on now still usable");
   info("usage                free check of the meter and the reset clock");
   info("watch [--follow]     read the opencode log, zero messages spent");
-  info("watch --follow --auto  rotate the moment a limit line lands");
-  info("hunt                 rotate until the probe says the route is open");
-  info("hunt --country XX --prefix a.b.c.   steer the search");
-  info("hunt --no-probe      rotate without spending a probe message");
+  info("watch --follow       keep tailing the log");
   info("token [save|restore] keep a local copy of auth.json");
   info("sessions [path]      list sessions and their ids for a folder");
   info("model                list providers and free models you can switch to");
@@ -2178,22 +1668,16 @@ function cmdHelp() {
   info("status               runtime, identity, network, bucket");
   info("doctor               check node, service, schema, identity");
   info("version              tool version plus the detected opencode version");
-  info("on | off             full auto: identity, pool, route, watcher, autostart");
-  info("on --keep-id --no-probe  keep the identity, skip the probe message");
+  info("on | off             full auto: identity, route, watcher, autostart");
+  info("on --keep-id         keep the current identity");
+  info("on --keep-route      leave the network path alone");
   info("proxy set <url>      route opencode through socks5:// or http://");
   info("proxy off            drop the upstream, direct egress");
-  info("proxy status         show the current upstream and the pool");
-  info("proxy stats          per-proxy health, speed and quarantine");
-  info("proxy test [--top 20] probe the pool and park the dead ones");
-  info("proxy pool add <url> queue proxies for reset to cycle through");
-  info("proxy pool fetch [u] pull a free proxy list into the pool");
-  info("proxy pool refresh   refetch the list now");
-  info("proxy pool clear     empty the pool, upstream left as is");
-  info("proxy next           jump to the next pooled proxy now");
+  info("proxy status         show the configured upstream and current ip");
   info("plugin               is the shield loaded, and where it lives");
   info("plugin install|off   list or unlist the shield in the opencode config");
   info("warp on|off|rotate   Cloudflare WARP path (optional)");
-  info("run <args...>        run opencode, rotate on free-limit");
+  info("run <args...>        run opencode once, no retries");
   info("uninstall            remove plugin, slash commands, state");
 }
 
@@ -2218,8 +1702,6 @@ function main() {
       return cmdUsage(flags);
     case "watch":
       return cmdWatch(flags);
-    case "hunt":
-      return cmdHunt(flags);
     case "token":
       return cmdToken(flags);
     case "status":
