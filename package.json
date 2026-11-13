@@ -1,7 +1,7 @@
 {
   "name": "opencode-unlimited",
   "version": "1.2.0-linux",
-  "description": "Linux/Arch companion for OpenCode: read the free-tier meter, watch for limit lines, apply your own proxy, re-id sessions and switch models.",
+  "description": "Linux port of OpenCode-Unlimited. Adds anonymous session token rotation and session re-id.",
   "private": true,
   "bin": {
     "opencode-unlimited": "bin/opencode-unlimited"
@@ -18,9 +18,14 @@
   ],
   "keywords": [
     "opencode",
-    "free-tier",
     "linux",
-    "arch",
-    "proxy"
-  ]
+    "port",
+    "session",
+    "free-tier"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/z1oty/OpenCode-Unlimited-Linux.git"
+  },
+  "homepage": "https://github.com/z1oty/OpenCode-Unlimited-Linux#readme"
 }

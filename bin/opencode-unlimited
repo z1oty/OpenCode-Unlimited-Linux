@@ -23,6 +23,7 @@ const DATA_DIR = paths.dataDir();
 const STATE_DIR = paths.stateDir();
 const STATE_FILE = join(CONFIG_DIR, "unlimited.json");
 const INFO_FILE = join(CONFIG_DIR, "unlimited-info.json");
+const SERVICE_FILE = join(CONFIG_DIR, "service.json");
 const PLUGIN_DIR = join(CONFIG_DIR, "plugins");
 const PLUGIN_FOLDER = join(PLUGIN_DIR, "unlimited-shield");
 const PLUGIN_FILE = join(PLUGIN_FOLDER, "index.js");
@@ -1349,6 +1350,30 @@ function cmdStatus() {
   info("details     : opencode-unlimited usage");
 }
 
+// ── anonymous session token rotation ─────────────────────────────────────────
+// service.json holds the anonymous OpenCode auth token that the server uses
+// to track the daily free-message quota.  Deleting it forces a fresh token
+// on the next app start, effectively resetting the per-token counter.
+function rotateServiceToken() {
+  if (!existsSync(SERVICE_FILE)) return { rotated: false, reason: "no service.json" };
+  try {
+    const svc = readJson(SERVICE_FILE);
+    const oldPw = svc && typeof svc.password === "string" ? svc.password : "";
+    if (!oldPw) return { rotated: false, reason: "no password field" };
+
+    // keep env block (proxy settings etc.), drop the password so opencode
+    // generates a brand-new anonymous token on the next start
+    const newSvc = { env: svc.env || {} };
+    // backup the old file so the user can restore if needed
+    const bak = SERVICE_FILE + ".bak";
+    writeFileSync(bak, JSON.stringify(svc, null, 2) + "\n", "utf8");
+    writeJson(SERVICE_FILE, newSvc);
+    return { rotated: true, oldPrefix: oldPw.slice(0, 8) };
+  } catch (e) {
+    return { rotated: false, reason: String(e.message || e) };
+  }
+}
+
 function selectFreeModel(cfg) {
   const free = ocInfo().freeModels || [];
   const current = String(cfg.model || "");
@@ -1367,6 +1392,26 @@ function autoSetup(cfg, options = {}) {
   info("opencode : " + opencodeExe());
   info("database : " + (dbPath() || "not found, the app has not run yet"));
   say("");
+
+  // ── rotate anonymous session token ─────────────────────────────────────────
+  say("[1.5/6] anonymous session token");
+  if (options.keepToken) {
+    info("token kept (--keep-token passed)");
+  } else {
+    // stop the opencode service so it releases service.json, then rotate
+    restartService(); // stop + will restart when opencode is opened
+    sleep(400);
+    const rot = rotateServiceToken();
+    if (rot.rotated) {
+      ok("service token rotated  (old prefix: " + rot.oldPrefix + "...)");
+      info("opencode will create a fresh anonymous token on next start");
+      info("old token backed up to service.json.bak");
+    } else {
+      info("token not rotated: " + rot.reason);
+    }
+  }
+  say("");
+
   say("[2/6] device identity");
   const identity = helperJson("identity.js", [options.keepId ? "show" : "rotate"]);
   if (identity && identity.deviceId) {
@@ -1405,6 +1450,10 @@ function autoSetup(cfg, options = {}) {
   else showReidBatch(reidPath(process.cwd(), false));
   say("");
   say("[6/6] watcher and plugin");
+  // After re-id opencode service needs to pick up the new token; a quick
+  // restart here makes it register the fresh anonymous session on startup.
+  restartService();
+  sleep(800);
   if (!installPlugin()) warn("plugin not installed, everything else still runs");
   setPluginEnabled(true);
   sleep(1200);
@@ -1433,6 +1482,7 @@ function cmdOn(flags) {
     noReid: yes(flags, "-noreid", "--no-reid"),
     noStart: yes(flags, "-nostart", "--no-start"),
     keepRoute: yes(flags, "-keeproute", "--keep-route"),
+    keepToken: yes(flags, "-keeptoken", "--keep-token"),
   });
   say("");
   const current = trace(cfg.proxy);

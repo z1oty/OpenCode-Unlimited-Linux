@@ -1,3 +1,4 @@
+# runtime state (not for the repo)
 identity.json
 unlimited.json
 unlimited-*.json
@@ -5,7 +6,16 @@ unlimited-*.log
 unlimited-*.pid
 *.log
 *.pid
+*.bak
+
+# xray binary (download separately)
+bin/xray
+
+# node
 node_modules/
 dist/
 coverage/
+
+# OS
 .DS_Store
+Thumbs.db
