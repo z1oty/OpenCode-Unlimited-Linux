@@ -8,7 +8,7 @@ Linux port of [Tazmyan/OpenCode-Unlimited](https://github.com/Tazmyan/OpenCode-U
 ---
 
 > [!WARNING]
-> ### ⚠️ Notice About Public Proxies
+> ### Notice About Public Proxies
 > **Public/scraped proxies very often do NOT work.**  
 > - Most free proxies scraped from public lists are dead, blocked by Cloudflare/inference gateways, heavily throttled, or time out after a few seconds.
 > - Proxy hunting may take multiple minutes and many attempts without discovering a functioning egress IP block.
@@ -97,7 +97,7 @@ opencode-unlimited clear .         # clear stored limit errors in DB
 | Feature | `main` (Manual / VPN) | `proxy-auto` (This branch) |
 |---|---|---|
 | **Egress Strategy** | Your own VPN / Manual proxy | Automatic public proxy pool |
-| **Reliability** | ⭐⭐⭐⭐⭐ High (you control the exit) | ⭐⭐ Low (depends on public proxy health) |
+| **Reliability** | High (you control the exit) | Low (depends on public proxy health) |
 | **Setup Speed** | Instant | Takes 1–5 min to hunt proxies |
 | **Anonymous Token Rotation** | ✅ Yes | ✅ Yes |
 | **Session Re-ID** | ✅ Yes | ✅ Yes |
