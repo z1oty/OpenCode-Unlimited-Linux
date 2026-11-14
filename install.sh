@@ -71,24 +71,36 @@ mkdir -p "$BIN_DIR"
 ln -sfn "$BIN" "$BIN_DIR/opencode-unlimited"
 ok "symlinked $BIN_DIR/opencode-unlimited"
 
+ln -sfn "$BIN" "$ROOT/opencode-unlimited"
+ok "symlinked $ROOT/opencode-unlimited"
+
+# If /usr/local/bin is writable, link there so it works immediately across all shells
+if [[ -w "/usr/local/bin" ]]; then
+    ln -sfn "$BIN" "/usr/local/bin/opencode-unlimited" 2>/dev/null && ok "symlinked /usr/local/bin/opencode-unlimited" || true
+elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    sudo ln -sfn "$BIN" "/usr/local/bin/opencode-unlimited" 2>/dev/null && ok "symlinked /usr/local/bin/opencode-unlimited" || true
+fi
+
 SHELL_RC="$HOME/.bashrc"
 if [[ -n "${ZSH_VERSION:-}" || -f "$HOME/.zshrc" ]]; then
     SHELL_RC="$HOME/.zshrc"
 fi
 
-if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-    if ! grep -q "opencode-unlimited" "$SHELL_RC" 2>/dev/null; then
+# Ensure ~/.local/bin is added to shell rc files
+for rc in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zshrc"; do
+    if [[ -f "$rc" ]] && ! grep -q "opencode-unlimited" "$rc" 2>/dev/null; then
         {
             echo ""
             echo "# opencode-unlimited"
             echo "export PATH=\"\$PATH:$BIN_DIR\""
-        } >> "$SHELL_RC"
-        ok "added $BIN_DIR to PATH in $SHELL_RC"
-    else
-        info "PATH entry already present in $SHELL_RC"
+        } >> "$rc"
     fi
-else
+done
+
+if [[ ":$PATH:" == *":$BIN_DIR:"* ]]; then
     info "$BIN_DIR is already on PATH"
+else
+    ok "added $BIN_DIR to PATH in shell configuration"
 fi
 
 echo
@@ -96,8 +108,11 @@ node "$BIN" install || true
 echo
 ok "installed"
 echo
+echo -e "  \e[1;33m[!] IMPORTANT:\e[0m If this is your first install in this terminal session, run:"
+echo -e "      \e[1;32msource $SHELL_RC\e[0m   (or reopen the terminal)"
+echo -e "      or run directly: \e[1;32m./opencode-unlimited on\e[0m"
+echo
 info "next steps:"
-info "  source $SHELL_RC   (or open a new terminal)"
 info "  opencode-unlimited doctor"
 info "  opencode-unlimited usage"
 info "  opencode-unlimited reset ."

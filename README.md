@@ -44,12 +44,13 @@ After running `on`, reopen OpenCode so it registers a fresh anonymous token.
 git clone -b proxy-auto https://github.com/z1oty/OpenCode-Unlimited-Linux
 cd OpenCode-Unlimited-Linux
 bash install.sh
+source ~/.bashrc   # or reopen terminal
 ```
 
-Then run:
+Or run directly from the cloned folder without setting up PATH:
 
 ```bash
-opencode-unlimited on
+./opencode-unlimited on
 ```
 
 ## Proxy Commands
