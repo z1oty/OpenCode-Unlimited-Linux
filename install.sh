@@ -37,7 +37,17 @@ chmod +x "$BIN" "$ROOT/install.sh" "$ROOT/uninstall.sh"
 ok "bin/opencode-unlimited is executable"
 
 if ! command -v node >/dev/null 2>&1; then
-    bad "node not found — install with: pacman -S nodejs"
+    if command -v pacman >/dev/null 2>&1; then
+        bad "node not found — install with: pacman -S nodejs"
+    elif command -v apt >/dev/null 2>&1; then
+        bad "node not found — install with: apt install nodejs"
+    elif command -v dnf >/dev/null 2>&1; then
+        bad "node not found — install with: dnf install nodejs"
+    elif command -v zypper >/dev/null 2>&1; then
+        bad "node not found — install with: zypper install nodejs"
+    else
+        bad "node not found — install nodejs >= 22.5 from https://nodejs.org"
+    fi
 fi
 NV="$(node --version)"
 MAJOR="${NV#v}"; MAJOR="${MAJOR%%.*}"
