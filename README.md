@@ -30,13 +30,13 @@ After running `on`, reopen OpenCode so it registers a fresh anonymous token.
 git clone https://github.com/z1oty/OpenCode-Unlimited-Linux
 cd OpenCode-Unlimited-Linux
 bash install.sh
+source ~/.bashrc   # or reopen terminal
 ```
 
-`install.sh` symlinks `bin/opencode-unlimited` into `~/.local/bin/`.  
-Open a new terminal (or `source ~/.bashrc`) and run:
+Or run directly from the cloned folder without setting up PATH:
 
 ```bash
-opencode-unlimited on
+./opencode-unlimited on
 ```
 
 ## Usage
