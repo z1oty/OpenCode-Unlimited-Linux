@@ -17,6 +17,7 @@ echo
 
 required=(
     "$ROOT/lib/proxy-bridge.js"
+    "$ROOT/lib/proxy-health.js"
     "$ROOT/lib/oc-info.js"
     "$ROOT/lib/db-tools.js"
     "$ROOT/lib/session-reid.js"

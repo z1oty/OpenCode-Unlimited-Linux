@@ -1,7 +1,7 @@
 {
   "name": "opencode-unlimited",
   "version": "1.2.0-linux",
-  "description": "Linux port of OpenCode-Unlimited. Adds anonymous session token rotation and session re-id.",
+  "description": "Linux port of OpenCode-Unlimited (proxy-auto branch). Adds automated public proxy pool rotation, anonymous session token rotation, and session re-id.",
   "private": true,
   "bin": {
     "opencode-unlimited": "bin/opencode-unlimited"
